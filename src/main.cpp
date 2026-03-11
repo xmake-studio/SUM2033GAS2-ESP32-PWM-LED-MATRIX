@@ -17,7 +17,7 @@
 
 #define CLK 7
 #define LAT 17
-#define OE 14
+#define OE 14 /* also GLCK */
 
 #define COLOR_DEPTH_BITS 10 /* should be between 10 and 16 */
 
@@ -26,11 +26,11 @@
 
 
 constexpr uint32_t CLK_MASK = 1UL << CLK;
-constexpr uint32_t OE_MASK  = 1UL << OE;
+constexpr uint32_t GCLK_MASK  = 1UL << OE;
 
 // fast GPIO magik used here, if you want CLK or OE pins to be larger than 31 - change registers or change this magik to gpio_set_level
 #define CLK_PULSE GPIO.out_w1tc = CLK_MASK; GPIO.out_w1ts = CLK_MASK;
-#define OE_PULSE  GPIO.out_w1tc = OE_MASK;  GPIO.out_w1ts = OE_MASK;
+#define GCLK_PULSE  GPIO.out_w1tc = GCLK_MASK;  GPIO.out_w1ts = GCLK_MASK;
 
 
 void selectRow(int row)
@@ -106,7 +106,7 @@ pixel getPixel(uint8_t x, uint8_t y)
 
 void loop() 
 {
-  const int colorBits = 16;
+  const int colorBits = 16; // should always be 16, independent on COLOR_DEPTH_BITS, since we should fill entire RAM of SUM2033
   const int channelsPerChip = 16;
   const int chips = MATRIX_WIDTH / channelsPerChip;
   const int rowsPerChip = MATRIX_SCAN;
@@ -114,7 +114,7 @@ void loop()
   const int CLK_pulses_per_row = chips * channelsPerChip * colorBits;
 
   const int additionalColorBits = COLOR_DEPTH_BITS - log2(CLK_pulses_per_row);
-  const int oe_pulses = pow(2, additionalColorBits);
+  const int glck_pulses = pow(2, additionalColorBits);
 
   uint64_t test = millis() / 200;
 
@@ -132,7 +132,7 @@ void loop()
         {
           const uint16_t m = 1UL << bit;
           
-          // full color set - kinda slow this way. Comment out 6 lines below and uncomment needed test pattern lines to see test patterns
+          // full color write - kinda slow this way. Uncomment 6 lines below and comment test pattern lines to see full color tests
           //gpio_set_level((gpio_num_t)R1, p1.r & m);
           //gpio_set_level((gpio_num_t)G1, p1.g & m);
           //gpio_set_level((gpio_num_t)B1, p1.b & m);
@@ -148,9 +148,9 @@ void loop()
 
           CLK_PULSE
 
-          for(uint8_t i = 0; i < oe_pulses; i++)
+          for(uint8_t i = 0; i < glck_pulses; i++)
           {
-            OE_PULSE
+            GCLK_PULSE
           }
         }
       }
@@ -158,7 +158,7 @@ void loop()
     }
 
     latch(2); // 2, 3 works?
-    OE_PULSE // to prevent ghosting
+    GCLK_PULSE // to prevent ghosting
     selectRow(row);
   }
 }
