@@ -19,6 +19,7 @@
 #define LAT 17
 #define OE 14
 
+#define COLOR_DEPTH_BITS 10 /* should be between 10 and 16 */
 
 #define MATRIX_WIDTH 64 /* can be increased in case of chain link, altho I have only one matrix */
 #define MATRIX_SCAN  32 /* 1/32 scan in my case, also means 64 pixels height */
@@ -26,14 +27,11 @@
 
 constexpr uint32_t CLK_MASK = 1UL << CLK;
 constexpr uint32_t OE_MASK  = 1UL << OE;
-constexpr uint32_t BOTH_MASK = CLK_MASK | OE_MASK;
 
 // fast GPIO magik used here, if you want CLK or OE pins to be larger than 31 - change registers or change this magik to gpio_set_level
 #define CLK_PULSE GPIO.out_w1tc = CLK_MASK; GPIO.out_w1ts = CLK_MASK;
 #define OE_PULSE  GPIO.out_w1tc = OE_MASK;  GPIO.out_w1ts = OE_MASK;
 
-// pulsing both CLK and OE in single call
-#define BOTH_PULSE  GPIO.out_w1tc = BOTH_MASK;  GPIO.out_w1ts = BOTH_MASK;
 
 void selectRow(int row)
 {
@@ -100,10 +98,10 @@ pixel getPixel(uint8_t x, uint8_t y)
 {
   pixel pix;
   
-  pix.r = pix.g = pix.b = ((x == y) * (x * 1023)); // diagonal white line with gradient
-  //pix.r = pix.g = pix.b = (x * 1023);            // just white gradient
+  pix.r = pix.g = pix.b = ((x == y) * gammaCorrectGrayscale(x * 1023)); // diagonal white line with gradient
+  //pix.r = pix.g = pix.b = gammaCorrectGrayscale(x * 1023);                  // just white gradient
   
-  return gammaCorrectPixel(pix);
+  return pix;
 }
 
 void loop() 
@@ -112,6 +110,11 @@ void loop()
   const int channelsPerChip = 16;
   const int chips = MATRIX_WIDTH / channelsPerChip;
   const int rowsPerChip = MATRIX_SCAN;
+
+  const int CLK_pulses_per_row = chips * channelsPerChip * colorBits;
+
+  const int additionalColorBits = COLOR_DEPTH_BITS - log2(CLK_pulses_per_row);
+  const int oe_pulses = pow(2, additionalColorBits);
 
   uint64_t test = millis() / 200;
 
@@ -124,9 +127,6 @@ void loop()
         const auto x = channel + channelsPerChip * chip;
         const auto p1 = getPixel(x, row);
         const auto p2 = getPixel(x, row + rowsPerChip);
-
-        // test pattern for blue horizontal lines
-        gpio_set_level((gpio_num_t)B1, row == (test % rowsPerChip));
 
         for(int8_t bit = colorBits - 1; bit >= 0; bit--) // inverted bit order
         {
@@ -142,10 +142,16 @@ void loop()
 
           // alternative - test patterns:
           // (it is normal that in test pattern mode only ony half of matrix works, it is 2X speed this way)
-          gpio_set_level((gpio_num_t)G1, bit == (test % colorBits));                                      // test pattern to check individual color bits
-          gpio_set_level((gpio_num_t)R1, (channel + channelsPerChip * chip) == ((test % MATRIX_WIDTH)));  // test pattern for checking individual channels (vertical lines)
+          gpio_set_level((gpio_num_t)R1, x == ((test % MATRIX_WIDTH)));  // test pattern for checking individual channels (ref vertical lines)
+          gpio_set_level((gpio_num_t)G1, bit == (test % colorBits));     // test pattern to check individual color bits (in green)
+          gpio_set_level((gpio_num_t)B1, row == (test % rowsPerChip));   // test pattern for blue horizontal lines
 
-          BOTH_PULSE // pulsing both CLK and OE in single call
+          CLK_PULSE
+
+          for(uint8_t i = 0; i < oe_pulses; i++)
+          {
+            OE_PULSE
+          }
         }
       }
       latch(0);
