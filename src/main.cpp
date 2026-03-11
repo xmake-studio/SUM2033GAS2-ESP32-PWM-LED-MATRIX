@@ -133,24 +133,19 @@ void loop()
           const uint16_t m = 1UL << bit;
           
           // full color set - kinda slow this way. Comment out 6 lines below and uncomment needed test pattern lines to see test patterns
-          gpio_set_level((gpio_num_t)R1, p1.r & m);
-          gpio_set_level((gpio_num_t)G1, p1.g & m);
-          gpio_set_level((gpio_num_t)B1, p1.b & m);
-          gpio_set_level((gpio_num_t)R2, p2.r & m);
-          gpio_set_level((gpio_num_t)G2, p2.g & m);
-          gpio_set_level((gpio_num_t)B2, p2.b & m);
+          //gpio_set_level((gpio_num_t)R1, p1.r & m);
+          //gpio_set_level((gpio_num_t)G1, p1.g & m);
+          //gpio_set_level((gpio_num_t)B1, p1.b & m);
+          //gpio_set_level((gpio_num_t)R2, p2.r & m);
+          //gpio_set_level((gpio_num_t)G2, p2.g & m);
+          //gpio_set_level((gpio_num_t)B2, p2.b & m);
 
           // alternative - test patterns:
           // (it is normal that in test pattern mode only ony half of matrix works, it is 2X speed this way)
-          //gpio_set_level((gpio_num_t)G1, bit == (test % colorBits));                                      // test pattern to check individual color bits
-          //gpio_set_level((gpio_num_t)R1, (channel + channelsPerChip * chip) == ((test % MATRIX_WIDTH)));  // test pattern for checking individual channels (vertical lines)
+          gpio_set_level((gpio_num_t)G1, bit == (test % colorBits));                                      // test pattern to check individual color bits
+          gpio_set_level((gpio_num_t)R1, (channel + channelsPerChip * chip) == ((test % MATRIX_WIDTH)));  // test pattern for checking individual channels (vertical lines)
 
-          //BOTH_PULSE // pulsing both CLK and OE in single call
-          CLK_PULSE
-          OE_PULSE
-          for(int i = 0; i < 64; i++)
-          {
-          }
+          BOTH_PULSE // pulsing both CLK and OE in single call
         }
       }
       latch(0);
