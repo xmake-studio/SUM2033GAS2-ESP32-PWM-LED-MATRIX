@@ -15,13 +15,14 @@ This driver is most likely can be used to drive similar SUM20XX panels, i've see
 
 ## Internal config registers
 
+- when I say "bit number N" below -- I count from zero
 - it has 3 internal config registers, written with 9, 11 and 13 CLK pulses after pulling LATCH high:
 
 ### REG1
 
-Consists of wierd bit number 2, most likely used to achieve more than 13 bits of color depth, but this requires wierd row activation sequence or some other configuration, and 13 bits is plenty for me.  
-Also consists of wierd bit number 3, which, when enabled, can do wierd stuff combined with other otherwise seemingly unused bits.  
-All other bits here and in other registers are most likely those "wierd" bits that only change anything when this bit 3 is enabled.
+- Consists of wierd bit number 2, most likely used to achieve more than 13 bits of color depth, but this requires wierd row activation sequence or some other configuration, and 13 bits is plenty for me.  
+- Also consists of wierd bit number 3, which, when enabled, can do wierd stuff combined with other otherwise seemingly unused bits.  
+- All other unused bits here and in other registers are most likely those "wierd" bits that only change anything when this bit 3 is enabled.
 
 ### REG2
 
@@ -33,6 +34,6 @@ All other bits here and in other registers are most likely those "wierd" bits th
 
 ### REG3
 
-Bit number 2 is used to enable X16 GCLK multiplication (X8 otherwise).  
-Bit number 4, when 0, seems to almost completely disable matrix? this "almost" is wierd tho, and this "almost" can be achieved with bit 3 of REG1 set to 1, so idk.  
-Otherwise also consists of those "wierd" bits.
+- Bit number 2 is used to enable X16 GCLK multiplication (X8 otherwise).  
+- Bit number 4, when 0, seems to almost completely disable matrix? this "almost" is wierd tho, and this "almost" can be achieved with bit 3 of REG1 set to 1, so idk.  
+- Otherwise also consists of those "wierd" bits.
