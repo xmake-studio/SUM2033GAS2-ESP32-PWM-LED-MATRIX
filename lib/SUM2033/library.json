@@ -1,0 +1,7 @@
+{
+  "name": "SUM2033",
+  "version": "1.0.0",
+  "description": "DMA driver for SUM2033(GAS2) LED panels on the ESP32-S3 (LCD_CAM + GDMA) with an Adafruit_GFX canvas",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

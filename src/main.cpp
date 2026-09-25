@@ -1,238 +1,113 @@
 #include <Arduino.h>
-#include "soc/gpio_struct.h"
+#include <Sum2033Display.h>
 
-// on my matrix B and R channels were swapped places
-#define B1 13
-#define B2 11
-#define G1 45
-#define G2 41
-#define R1 12
-#define R2 10
-
-#define CH_A 9
-#define CH_B 38
-#define CH_C 8
-#define CH_D 18
-#define CH_E 39
-
-#define CLK 7
-#define LAT 17
-#define OE  14 /* also GLCK */
-
-#define MATRIX_WIDTH 64 /* can be increased in case of chain link, altho I have only one matrix */
-#define MATRIX_SCAN  32 /* 1/32 scan in my case, also means 64 pixels height */
-
-uint8_t cfg_brightness = 63; // 0-63  (6 bits)
-uint8_t cfg_color_bits = 13; // 10-13 (2 bits)
-
-// in-chip multiplier of GCLK pulses count, as far as I know can be configured to either 8 or 16, 
-// altho I haven't seen any benefit in decreasing it to 8.
-uint8_t cfg_gclk_mul = 16;  
-
-const int storedColorBits = 16; // should always be 16, independent on cfg_color_bits, since we should fill entire RAM of SUM2033
-const int channelsPerChip = 16; // always 16 for SUM2033
-const int chips_count = MATRIX_WIDTH / channelsPerChip;
-
-constexpr uint32_t CLK_MASK = 1UL << CLK;
-constexpr uint32_t GCLK_MASK  = 1UL << OE;
-
-// fast GPIO magik used here, if you want CLK or OE pins to be larger than 31 - change registers or change this magik to gpio_set_level
-#define CLK_PULSE   GPIO.out_w1ts = CLK_MASK;   GPIO.out_w1tc = CLK_MASK;
-#define GCLK_PULSE  GPIO.out_w1ts = GCLK_MASK;  GPIO.out_w1tc = GCLK_MASK;
-
-void selectRow(int row)
+// Wiring is the same as in the bit-banged version (on my matrix B and R
+// channels were swapped places). These are also the library defaults.
+static Sum2033Config panelConfig()
 {
-  gpio_set_level((gpio_num_t)CH_A, (row >> 0) & 1);
-  gpio_set_level((gpio_num_t)CH_B, (row >> 1) & 1);
-  gpio_set_level((gpio_num_t)CH_C, (row >> 2) & 1);
-  gpio_set_level((gpio_num_t)CH_D, (row >> 3) & 1);
-  gpio_set_level((gpio_num_t)CH_E, (row >> 4) & 1);
+  Sum2033Config cfg;
+  cfg.pins.b1 = 13;
+  cfg.pins.b2 = 11;
+  cfg.pins.g1 = 45;
+  cfg.pins.g2 = 41;
+  cfg.pins.r1 = 12;
+  cfg.pins.r2 = 10;
+
+  cfg.pins.a = 9;
+  cfg.pins.b = 38;
+  cfg.pins.c = 8;
+  cfg.pins.d = 18;
+  cfg.pins.e = 39;
+
+  cfg.pins.clk = 7;
+  cfg.pins.lat = 17;
+  cfg.pins.oe  = 14; /* also GCLK */
+
+  cfg.brightness = 63;      // 0-63  (6 bits)
+  cfg.colorBits = 13;       // 10-13 (2 bits)
+  cfg.gclkMultiplier = 16;  // 8 or 16
+
+  // Every panel refresh also uploads a complete frame, so this sets both the
+  // refresh rate and the max frame rate: 10 MHz ~290 Hz, 16 MHz ~465 Hz,
+  // 20 MHz ~580 Hz. Go lower if you see random speckles.
+  cfg.clockHz = 10000000;
+  return cfg;
 }
 
-void IRAM_ATTR sendPwmClock(int clocks) {
-  while (clocks--) {
-    GCLK_PULSE
-  }
-}
+Sum2033Display display(64, 64);
 
-void IRAM_ATTR sendLatch(unsigned char clocks)
+// Same colorful RG gradient as the original test code, 16 bit per channel,
+// rendered straight into the DMA buffer without a framebuffer.
+static void showTestGradient()
 {
-  gpio_set_level((gpio_num_t)LAT, HIGH);
-
-  while(clocks--) {
-    CLK_PULSE
-  }
-
-  gpio_set_level((gpio_num_t)LAT, LOW);
+  auto gamma16 = [](float v) { return uint16_t(powf(v / 65535.0f, 2.4f) * 65535.0f); };
+  display.panel().render([&](int x, int y) -> sum2033::Rgb16 {
+    return {gamma16(x * 1040), gamma16(y * 1040), 0};
+  });
 }
 
-void sendConfiguration(unsigned char latches, unsigned int data) {
-    unsigned char num = chips_count;
+static uint8_t sinTable[256];
 
-    latches = 16 - latches;
-
-    gpio_set_level((gpio_num_t)LAT, 0); 
-
-    while(num--) {
-        for(unsigned char x = 0; x < 16; x++) {
-            unsigned int dataMask = 0x8000 >> x;
-
-            bool en = data & dataMask;
-
-            gpio_set_level((gpio_num_t)R1, en);
-            gpio_set_level((gpio_num_t)G1, en);
-            gpio_set_level((gpio_num_t)B1, en);
-            gpio_set_level((gpio_num_t)R2, en);
-            gpio_set_level((gpio_num_t)G2, en);
-            gpio_set_level((gpio_num_t)B2, en);
-
-            if(num == 0 && x == latches) 
-            { 
-              gpio_set_level((gpio_num_t)LAT, 1); 
-            }
-            CLK_PULSE
-        }
-
-        gpio_set_level((gpio_num_t)LAT, 0); 
+static void drawPlasma(uint32_t t)
+{
+  for (int y = 0; y < display.height(); y++) {
+    for (int x = 0; x < display.width(); x++) {
+      uint8_t v = sinTable[uint8_t(x * 4 + t)] / 4 + sinTable[uint8_t(y * 5 - t * 2)] / 4 +
+                  sinTable[uint8_t((x + y) * 3 + t)] / 4 + sinTable[uint8_t(x * y / 8 - t)] / 4;
+      display.setPixel(x, y, sinTable[uint8_t(v + t)], sinTable[uint8_t(v + 85)], sinTable[uint8_t(v + 170 - t)]);
     }
+  }
 }
 
-void sendConfigRegs()
-{
-  sendLatch(14); // Pre-active command
-  sendConfiguration(9, 0b0); // Write config register 1
-
-  // 6 bits of brightness
-  uint16_t reg2 = cfg_brightness & 0b111111; 
-
-  // 5 bits after brightness - scan lines register, we have 1/32 scan, so all ones (literally 1984) 
-  reg2 |= (MATRIX_SCAN - 1) << 6; 
-  
-  // another 2 bits is inverted color depth - from 10 to 13 in normal (slow?) mode
-  reg2 |= (~(cfg_color_bits - 10) & 0b11) << 11; 
-  
-  sendLatch(14);  // Pre-active command
-  sendConfiguration(11, reg2); // Write config register 2
-
-  uint16_t reg3 = 0;
-
-  reg3 |= (cfg_gclk_mul >> 4) << 2; // shifting by 4, since 16 = 0b10000 >> 4 = 0b1
-  reg3 |= 1 << 4; // must be 1 for matrix to function correctly
-
-  sendLatch(14); // Pre-active command
-  sendConfiguration(13, reg3); // Write config register 3
-}
-
-void setup() 
+void setup()
 {
   Serial.begin(115200);
-  pinMode(R1  , OUTPUT);
-  pinMode(G1  , OUTPUT);
-  pinMode(B1  , OUTPUT);
-  pinMode(R2  , OUTPUT);
-  pinMode(G2  , OUTPUT);
-  pinMode(B2  , OUTPUT);
-  pinMode(CH_A, OUTPUT);  
-  pinMode(CH_B, OUTPUT);
-  pinMode(CH_C, OUTPUT);  
-  pinMode(CH_D, OUTPUT);
-  pinMode(CH_E, OUTPUT);
-  pinMode(CLK , OUTPUT);  
-  pinMode(LAT , OUTPUT);
-  pinMode(OE  , OUTPUT);
-}
+  for (int i = 0; i < 256; i++) sinTable[i] = uint8_t(127.5f + 127.5f * sinf(i * 2 * PI / 256));
 
-struct pixel
-{
-  uint16_t r;
-  uint16_t g;
-  uint16_t b;
-};
-
-uint16_t gammaCorrectGrayscale(uint16_t input, float gamma = 2.4)
-{
-  float col = (float)input / 65535.0f;
-  col = powf(col, gamma);
-  return (uint16_t)(col * 65535.0f);
-}
-
-pixel gammaCorrectPixel(pixel p, float gamma = 2.4) {
-  p.r = gammaCorrectGrayscale(p.r, gamma);
-  p.g = gammaCorrectGrayscale(p.g, gamma);
-  p.b = gammaCorrectGrayscale(p.b, gamma);
-  return p;
-}
-
-pixel getPixel(uint8_t x, uint8_t y)
-{
-  pixel pix;
-  
-  // 1040 here everywhere since it is 65535/63
-
-  //pix.r = pix.g = pix.b = ((x == y) * gammaCorrectGrayscale(x * 1040)); // diagonal white line with gradient
-  //pix.r = pix.g = pix.b = y == 1 ? 65535 : ((y == 5) * (x * 1040));     // test
-  //pix.r = pix.g = pix.b = gammaCorrectGrayscale(x * 1040);              // just white gradient
-
-  pix.r = gammaCorrectGrayscale(x * 1040);                  // colorful RG gradient
-  pix.g = gammaCorrectGrayscale(y * 1040);                  // colorful RG gradient
-  
-  return pix;
-}
-
-void loop() 
-{
-  //cfg_brightness = (millis() / 100) % 64; // to test brightness
-  //cfg_color_bits = 10 + (millis() / 1000) % 4; // to test color depth
-
-  sendConfigRegs();
-
-  static int c = -1;
-  c++;
-  // updating entire frame in first 2 loops (since double buffering)
-  bool fullUpdate = c < 2;
-
-  int gclk_pulses_per_line = pow(2, cfg_color_bits) / cfg_gclk_mul;
-
-  sendLatch(3); // vsync + buffer swap
-
-  for(uint8_t line = 0; line < MATRIX_SCAN; line++) 
-  {
-    sendPwmClock(17); // should be here, and 17 clocks exactly
-    selectRow(line);
-    sendPwmClock(gclk_pulses_per_line);
-
-    if(!fullUpdate)
-      continue;
-    
-    for(uint8_t channel = 0; channel < channelsPerChip; channel++) 
-    {
-      for(uint8_t chip = 0; chip < chips_count; chip++)
-      {
-        const auto x = channel + channelsPerChip * chip;
-        const auto p1 = getPixel(x, line);
-        const auto p2 = getPixel(x, line + MATRIX_SCAN);
-
-        for(int8_t bit = storedColorBits - 1; bit >= 0; bit--) // inverted bit order
-        {
-          const uint16_t m = 1UL << bit;
-        
-          gpio_set_level((gpio_num_t)R1, p1.r & m);
-          gpio_set_level((gpio_num_t)G1, p1.g & m);
-          gpio_set_level((gpio_num_t)B1, p1.b & m);
-          gpio_set_level((gpio_num_t)R2, p2.r & m);
-          gpio_set_level((gpio_num_t)G2, p2.g & m);
-          gpio_set_level((gpio_num_t)B2, p2.b & m);
-
-          if(chip == chips_count - 1 && bit == 0)
-          {
-            // send a latch for 1 clock after every chip was written to 
-            gpio_set_level((gpio_num_t)LAT, 1); 
-          }
-
-          CLK_PULSE
-        }
-      }
-      gpio_set_level((gpio_num_t)LAT, 0);
+  if (!display.begin(panelConfig())) {
+    while (true) {
+      Serial.println("SUM2033 init failed (bad config or not enough internal RAM)");
+      delay(1000);
     }
+  }
+  Sum2033& panel = display.panel();
+  Serial.printf("SUM2033: CLK %u Hz, refresh %.1f Hz, DMA memory %u bytes, free heap %u bytes\n",
+                unsigned(panel.clockHz()), panel.refreshRate(), unsigned(panel.memoryUsage()),
+                unsigned(ESP.getFreeHeap()));
+
+  showTestGradient();
+  delay(3000);
+}
+
+void loop()
+{
+  static uint32_t frames = 0, lastReport = millis(), lastVsyncs = 0;
+  static uint32_t drawUs = 0, flipUs = 0;
+  static float fps = 0;
+
+  const uint32_t t0 = micros();
+  drawPlasma(millis() / 16);
+  display.setCursor(1, 1);
+  display.setTextColor(Sum2033Display::color565(255, 255, 255));
+  display.print(int(fps + 0.5f));
+  const uint32_t t1 = micros();
+  display.flip();
+  const uint32_t t2 = micros();
+
+  drawUs += t1 - t0;
+  flipUs += t2 - t1;
+  frames++;
+
+  const uint32_t now = millis();
+  if (now - lastReport >= 1000) {
+    Sum2033& panel = display.panel();
+    const uint32_t vsyncs = panel.vsyncCount();
+    const float seconds = (now - lastReport) / 1000.0f;
+    fps = frames / seconds;
+    Serial.printf("%.1f fps (draw %.2f ms, flip %.2f ms), panel refresh %.1f Hz\n", fps,
+                  drawUs / 1000.0f / frames, flipUs / 1000.0f / frames, (vsyncs - lastVsyncs) / seconds);
+    frames = drawUs = flipUs = 0;
+    lastVsyncs = vsyncs;
+    lastReport = now;
   }
 }
